@@ -45,4 +45,5 @@ ITEM_PIPELINES = {
 
 URL_QUEUE_TEMPLATE = "/data/ipc/url_queue/crawler_{id:02d}"
 RESULT_DIR_TEMPLATE = "/data/ipc/crawl_result/crawler_{id:02d}"
+INTERVAL_MINUTES = 10
 

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
-from libs.ipc.jsonio import atomic_write_json
+from libs.ipc.jsonio import append_jsonl
 from libs.ipc.folder_reader import current_interval
 
 
@@ -51,8 +51,7 @@ class JsonPipeline:
         out_dir = self.base_dir / date / t
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        name = f"{uuid.uuid4().hex}.json"
-        path = out_dir / name
+        path = out_dir / f"{datetime.now(timezone.utc).strftime('%H%M')}.jsonl"
 
         rec = {
             "url": item.get("url"),
@@ -64,6 +63,6 @@ class JsonPipeline:
             "outlinks": item.get("outlinks", []),
         }
 
-        atomic_write_json(path, rec)
+        append_jsonl(path, rec)
         return item
 

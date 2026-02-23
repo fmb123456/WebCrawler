@@ -2,7 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 from collections import defaultdict
 
-from libs.ipc.jsonio import read_json
+from libs.ipc.jsonio import read_json, read_jsonl
 from libs.stats.delta_writer import StatsDeltaWriter
 
 from .db_ops import IngestDB, IngestResult
@@ -16,46 +16,61 @@ class IngestService:
 
     def process_folder(self, folder: Path):
         print(f"[ingestor {self.ingestor_id:02d}] start processing '{folder}'", flush=True)
+        file_cnt = 0
         counters = defaultdict(int)
         domains = {}
-        for p in folder.glob("*.json"):
-            try:
-                rec = read_json(p)
-                if rec.get("status") == "new":
-                    if self.db.process_link(rec):
-                        # discover new link
+
+        for f in folder.iterdir():
+            if not f.is_file():
+                continue
+
+            if f.suffix == ".json":
+                recs = [read_json(f)]
+                file_cnt += 1
+            elif f.suffix == ".jsonl":
+                recs = read_jsonl(f)
+                file_cnt += 1
+            else:
+                continue
+            
+            for rec in recs:
+                try:
+                    if rec.get("status") == "new":
+                        if self.db.process_link(rec):
+                            # discover new link
+                            counters["new_links"] += 1
+                        continue
+
+                    result = self.db.process_result(rec)
+                    if not result:
+                        continue
+
+                    domains.setdefault(result.domain_id, defaultdict(int))
+
+                    if result.new_link:
                         counters["new_links"] += 1
-                    continue
+                    if result.is_ok:
+                        counters["num_fetch_ok"] += 1
+                        domains[result.domain_id]["num_fetch_ok"] += 1
+                    else:
+                        counters["num_fetch_fail"] += 1
+                        domains[result.domain_id]["num_fetch_fail"] += 1
+                    if result.is_upd:
+                        counters["num_content_update"] += 1
+                        domains[result.domain_id]["num_content_update"] += 1
+                    if result.fail_reason:
+                        counters.setdefault("fail_reasons", defaultdict(int))[result.fail_reason] += 1
+                        domains[result.domain_id].setdefault("fail_reasons", defaultdict(int))[result.fail_reason] += 1
+                except Exception as e:
+                    print(f"[ingestor {self.ingestor_id:02d}] ERROR: {e}", flush=True)
+                    counters["error_count"] += 1
+                    counters["ingest_error"] += 1
 
-                result = self.db.process_result(rec)
-                if not result:
-                    continue
-
-                domains.setdefault(result.domain_id, defaultdict(int))
-
-                if result.new_link:
-                    counters["new_links"] += 1
-                if result.is_ok:
-                    counters["num_fetch_ok"] += 1
-                    domains[result.domain_id]["num_fetch_ok"] += 1
-                else:
-                    counters["num_fetch_fail"] += 1
-                    domains[result.domain_id]["num_fetch_fail"] += 1
-                if result.is_upd:
-                    counters["num_content_update"] += 1
-                    domains[result.domain_id]["num_content_update"] += 1
-                if result.fail_reason:
-                    counters.setdefault("fail_reasons", defaultdict(int))[result.fail_reason] += 1
-                    domains[result.domain_id].setdefault("fail_reasons", defaultdict(int))[result.fail_reason] += 1
-            except Exception as e:
-                print(f"[ingestor {self.ingestor_id:02d}] ERROR: {e}", flush=True)
-                counters["error_count"] += 1
-                counters["ingest_error"] += 1
         domains.pop(None, None)
         self.stats.write(
             source="ingestor",
             counters=counters,
             domains=domains
         )
-        print(f"[ingestor {self.ingestor_id:02d}] finish processing '{folder}'", flush=True)
+        print(f"[ingestor {self.ingestor_id:02d}] finish processing '{folder}', {file_cnt} files", flush=True)
 

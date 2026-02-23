@@ -69,7 +69,7 @@ class StatsAggregatorService:
         while True:
             files = sorted(self.stats_dir.glob("*.json"))[:10]
             if not files:
-                time.sleep(300)
+                time.sleep(5)
                 continue
 
             for f in files:

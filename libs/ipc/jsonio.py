@@ -23,7 +23,27 @@ def atomic_write_json(path: str, payload: Any) -> None:
 
     os.replace(tmp, p)
 
+def append_jsonl(path: str, payload: Any) -> None:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+
+    line = (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    os.write(fd, line)
+    os.close(fd)
 
 def read_json(path: Path) -> Any:
     with open(path, "rb") as f:
         return json.loads(f.read().decode("utf-8"))
+
+def read_jsonl(path: Path) -> Any:
+    out = []
+    with open(path, "rb") as f:
+        for raw in f:
+            raw = raw.strip()
+            if not raw:
+                continue
+            out.append(json.loads(raw.decode("utf-8")))
+    return out
+

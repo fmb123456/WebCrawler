@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import uuid
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,7 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import OperationalError, InterfaceError
 
 from libs.config.loader import load_yaml, require
-from libs.ipc.jsonio import read_json, atomic_write_json
+from libs.ipc.jsonio import read_json, read_jsonl, append_jsonl
 from libs.stats.delta_writer import StatsDeltaWriter
 from libs.ipc.folder_reader import current_interval
 
@@ -79,72 +78,85 @@ class RouterService:
         """
         Read all json files under folder; write transformed json to ingestor dirs.
         """
+        print(f"[router {self.cfg.router_id:02d}] start processing '{folder}'", flush=True)
         error = 0
+        file_cnt = 0
 
-        for f in sorted(folder.glob("*.json")):
-            rec = read_json(f)
+        for f in folder.iterdir():
+            if not f.is_file():
+                continue
 
-            domain = rec.get("domain")
-            status = rec.get("status")  # "ok"/"fail"
-            content = rec.get("content")
-            outlinks = rec.get("outlinks", [])
+            if f.suffix == ".json":
+                recs = [read_json(f)]
+                file_cnt += 1
+            elif f.suffix == ".jsonl":
+                recs = read_jsonl(f)
+                file_cnt += 1
+            else:
+                continue
 
-            shard_id = self.sharder.domain_to_shard(domain)
-            ingestor_id = self.sharder.shard_to_ingestor(shard_id)
+            for rec in recs:
+                domain = rec.get("domain")
+                status = rec.get("status")  # "ok"/"fail"
+                content = rec.get("content")
+                outlinks = rec.get("outlinks", [])
 
-            content_hash = None
-            if status == "ok" and isinstance(content, str):
-                content_hash = sha1_hex(content)
+                shard_id = self.sharder.domain_to_shard(domain)
+                ingestor_id = self.sharder.shard_to_ingestor(shard_id)
 
-            for attempt in range(3):
-                try:
-                    with self.Session() as sess:
-                        domain_resolver = DomainResolver(sess)
-                        with sess.begin():
-                            # resolve domain_id from DB (insert if missing)
-                            domain_id, _ = domain_resolver.ensure_and_get(domain, shard_id)
+                content_hash = None
+                if status == "ok" and isinstance(content, str):
+                    content_hash = sha1_hex(content)
 
-                            new_outlinks = []
-                            for link in outlinks:
-                                l = self._process_link(domain_resolver, link)
-                                if l:
-                                    new_outlinks.append(l)
+                for attempt in range(3):
+                    try:
+                        with self.Session() as sess:
+                            domain_resolver = DomainResolver(sess)
+                            with sess.begin():
+                                # resolve domain_id from DB (insert if missing)
+                                domain_id, _ = domain_resolver.ensure_and_get(domain, shard_id)
 
-                    out = {
-                        "url": rec.get("url"),
-                        "status": status,
-                        "fetched_at": rec.get("fetched_at"),
-                        "fail_reason": rec.get("fail_reason"),
-                        "content": content,
-                        "outlinks": new_outlinks,
-                        "shard_id": shard_id,
-                        "domain_id": domain_id,
-                        "content_hash": content_hash,
-                    }
+                                new_outlinks = []
+                                for link in outlinks:
+                                    l = self._process_link(domain_resolver, link)
+                                    if l:
+                                        new_outlinks.append(l)
 
-                    out_dir = self._out_dir(ingestor_id)
-                    out_dir.mkdir(parents=True, exist_ok=True)
-                    out_path = out_dir / f.name
-                    atomic_write_json(out_path, out)
-                    break # success
+                        out = {
+                            "url": rec.get("url"),
+                            "status": status,
+                            "fetched_at": rec.get("fetched_at"),
+                            "fail_reason": rec.get("fail_reason"),
+                            "content": content,
+                            "outlinks": new_outlinks,
+                            "shard_id": shard_id,
+                            "domain_id": domain_id,
+                            "content_hash": content_hash,
+                        }
 
-                except (OperationalError, InterfaceError) as e:
-                    # connection reset / server closed / broken pipe
-                    if attempt == 2:
-                        print(f"[router {self.cfg.router_id:02d}] db error {domain}: {e}", flush=True)
+                        out_dir = self._out_dir(ingestor_id)
+                        out_dir.mkdir(parents=True, exist_ok=True)
+                        out_path = out_dir / f"{datetime.now(timezone.utc).strftime('%H%M')}_router{self.cfg.router_id:02d}.jsonl"
+                        append_jsonl(out_path, out)
+                        break # success
+
+                    except (OperationalError, InterfaceError) as e:
+                        # connection reset / server closed / broken pipe
+                        if attempt == 2:
+                            print(f"[router {self.cfg.router_id:02d}] db error {domain}: {e}", flush=True)
+                            error += 1
+                            break
+
+                        try:
+                            self.engine.dispose()
+                        except Exception:
+                            pass
+                        time.sleep(0.2 * (2 ** attempt))
+
+                    except Exception as e:
+                        print(f"[router {self.cfg.router_id:02d}] domain resolve error {domain}: {e}", flush=True)
                         error += 1
                         break
-
-                    try:
-                        self.engine.dispose()
-                    except Exception:
-                        pass
-                    time.sleep(0.2 * (2 ** attempt))
-
-                except Exception as e:
-                    print(f"[router {self.cfg.router_id:02d}] domain resolve error {domain}: {e}", flush=True)
-                    error += 1
-                    break
 
         if error:
             self.stats.write(
@@ -154,6 +166,7 @@ class RouterService:
                     "route_error": error,
                 },
             )
+        print(f"[router {self.cfg.router_id:02d}] finish processing '{folder}', {file_cnt} files", flush=True)
 
     def _process_link(self, domain_resolver: DomainResolver, link: Dict[str, str]) -> Optional[Dict[str, Any]]:
         url = link.get("url")
@@ -177,9 +190,8 @@ class RouterService:
 
             out_dir = self._out_dir(ingestor_id)
             out_dir.mkdir(parents=True, exist_ok=True)
-            out_path = out_dir / f"{uuid.uuid4().hex}.json"
-
-            atomic_write_json(out_path, out)
+            out_path = out_dir / f"{datetime.now(timezone.utc).strftime('%H%M')}_router{self.cfg.router_id:02d}.jsonl"
+            append_jsonl(out_path, out)
 
             return {
                 "url": url,
