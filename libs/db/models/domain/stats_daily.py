@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, Date
+from sqlalchemy import BigInteger, Column, Integer, Date
 from sqlalchemy.dialects.postgresql import JSONB
 from libs.db.base import Base
 
@@ -6,7 +6,7 @@ from libs.db.base import Base
 class DomainStatsDaily(Base):
     __tablename__ = "domain_stats_daily"
 
-    domain_id = Column(Integer, primary_key=True)
+    domain_id = Column(BigInteger, primary_key=True)
     event_date = Column(Date, primary_key=True)
 
     shard_id = Column(Integer, nullable=False)
