@@ -29,9 +29,9 @@ RETRY_TIMES = 1 # initial + retry = 2
 REDIRECT_ENABLED = True
 COOKIES_ENABLED = False
 
-HTTPCACHE_ENABLED = True
-HTTPCACHE_DIR = "httpcache"
-HTTPCACHE_POLICY = "scrapy.extensions.httpcache.RFC2616Policy"
+#HTTPCACHE_ENABLED = True
+#HTTPCACHE_DIR = "httpcache"
+#HTTPCACHE_POLICY = "scrapy.extensions.httpcache.RFC2616Policy"
 
 # Memory & stats logging
 EXTENSIONS = {
