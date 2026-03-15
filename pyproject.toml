@@ -15,6 +15,9 @@ dependencies = [
 include = ["libs*", "containers*"]
 
 [project.optional-dependencies]
+redis = [
+    "redis>=5.2",
+]
 dev = [
     "ruff>=0.11",
 ]
