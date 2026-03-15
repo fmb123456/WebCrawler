@@ -1,0 +1,20 @@
+[project]
+name = "webcrawler"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "sqlalchemy>=2.0.44",
+    "psycopg2-binary>=2.9.11",
+    "pyyaml>=6.0.2",
+    "scrapy>=2.12",
+    "requests>=2.32",
+    "tldextract>=5.1.1",
+]
+
+[tool.setuptools.packages.find]
+include = ["libs*", "containers*"]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.11",
+]
